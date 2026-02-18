@@ -2,7 +2,12 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const { CREATE_TABLES } = require('./schema');
 
-const DB_PATH = path.join(__dirname, '..', '..', 'index.db');
+// On Vercel, use /tmp/ for the database (ephemeral but writable)
+// For persistent storage on Vercel, use an external DB (Turso, PlanetScale, etc.)
+// Locally, store in the project root
+const DB_PATH = process.env.VERCEL
+  ? '/tmp/index.db'
+  : process.env.DATABASE_PATH || path.join(__dirname, '..', '..', 'index.db');
 
 let db;
 
