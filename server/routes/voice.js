@@ -25,13 +25,13 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB max (for 2-hour recordings)
+    fileSize: 500 * 1024 * 1024, // 500MB max
   },
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 'audio/ogg',
       'audio/m4a', 'audio/x-m4a', 'audio/mp4', 'audio/flac', 'audio/aac',
-      'video/webm', 'video/mp4', // browsers sometimes tag audio recordings as video
+      'video/webm', 'video/mp4',
     ];
     if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(mp3|wav|webm|ogg|m4a|mp4|flac|aac)$/i)) {
       cb(null, true);
@@ -51,10 +51,10 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     const db = getDb();
     const voiceNote = db
       .prepare(
-        `INSERT INTO voice_notes (household_id, uploaded_by, filename, original_name, file_size, status)
-         VALUES (?, ?, ?, ?, ?, 'uploaded')`
+        `INSERT INTO voice_notes (filename, original_name, file_size, status)
+         VALUES (?, ?, ?, 'uploaded')`
       )
-      .run(req.householdId, req.userId, req.file.filename, req.file.originalname, req.file.size);
+      .run(req.file.filename, req.file.originalname, req.file.size);
 
     const voiceNoteId = voiceNote.lastInsertRowid;
 
@@ -77,7 +77,7 @@ router.post('/:id/process', async (req, res) => {
   const voiceNoteId = req.params.id;
 
   try {
-    const voiceNote = db.prepare('SELECT * FROM voice_notes WHERE id = ? AND household_id = ?').get(voiceNoteId, req.householdId);
+    const voiceNote = db.prepare('SELECT * FROM voice_notes WHERE id = ?').get(voiceNoteId);
     if (!voiceNote) {
       return res.status(404).json({ error: 'Voice note not found' });
     }
@@ -86,10 +86,8 @@ router.post('/:id/process', async (req, res) => {
       return res.status(409).json({ error: 'Voice note is already being processed' });
     }
 
-    // Mark as processing
-    db.prepare("UPDATE voice_notes SET status = 'processing' WHERE id = ? AND household_id = ?").run(voiceNoteId, req.householdId);
+    db.prepare("UPDATE voice_notes SET status = 'processing' WHERE id = ?").run(voiceNoteId);
 
-    // Send immediate response
     res.json({
       id: voiceNoteId,
       status: 'processing',
@@ -97,49 +95,44 @@ router.post('/:id/process', async (req, res) => {
     });
 
     // Process in background
-    processVoiceNote(req.householdId, req.userId, voiceNoteId, voiceNote.filename).catch((err) => {
+    processVoiceNote(voiceNoteId, voiceNote.filename).catch((err) => {
       console.error('Background processing error:', err);
-      db.prepare("UPDATE voice_notes SET status = 'error', error = ? WHERE id = ? AND household_id = ?").run(
+      db.prepare("UPDATE voice_notes SET status = 'error', error = ? WHERE id = ?").run(
         err.message,
-        voiceNoteId,
-        req.householdId
+        voiceNoteId
       );
     });
   } catch (err) {
     console.error('Process error:', err);
-    db.prepare("UPDATE voice_notes SET status = 'error', error = ? WHERE id = ? AND household_id = ?").run(
+    db.prepare("UPDATE voice_notes SET status = 'error', error = ? WHERE id = ?").run(
       err.message,
-      voiceNoteId,
-      req.householdId
+      voiceNoteId
     );
     res.status(500).json({ error: err.message });
   }
 });
 
 // Background voice note processing
-async function processVoiceNote(householdId, userId, voiceNoteId, filename) {
+async function processVoiceNote(voiceNoteId, filename) {
   const db = getDb();
   const filePath = path.join(__dirname, '..', '..', 'uploads', filename);
 
   try {
-    // Step 1: Transcribe
     console.log(`[Voice ${voiceNoteId}] Transcribing...`);
     const transcription = await ai.transcribeAudio(filePath);
 
     db.prepare(
-      "UPDATE voice_notes SET transcript = ?, duration_seconds = ?, status = 'transcribed' WHERE id = ? AND household_id = ?"
-    ).run(transcription.text, Math.round(transcription.duration || 0), voiceNoteId, householdId);
+      "UPDATE voice_notes SET transcript = ?, duration_seconds = ?, status = 'transcribed' WHERE id = ?"
+    ).run(transcription.text, Math.round(transcription.duration || 0), voiceNoteId);
 
     console.log(`[Voice ${voiceNoteId}] Transcribed. Length: ${transcription.text.length} chars`);
 
-    // Step 2: Parse into inventory items
     console.log(`[Voice ${voiceNoteId}] Parsing inventory...`);
     const parsed = await ai.parseTranscriptChunked(transcription.text);
 
-    db.prepare("UPDATE voice_notes SET parsed_data = ?, status = 'parsed' WHERE id = ? AND household_id = ?").run(
+    db.prepare("UPDATE voice_notes SET parsed_data = ?, status = 'parsed' WHERE id = ?").run(
       JSON.stringify(parsed),
-      voiceNoteId,
-      householdId
+      voiceNoteId
     );
 
     console.log(
@@ -147,15 +140,14 @@ async function processVoiceNote(householdId, userId, voiceNoteId, filename) {
         `${(parsed.containers || []).length} containers, ${(parsed.locations || []).length} locations`
     );
 
-    // Step 3: Store in database
     console.log(`[Voice ${voiceNoteId}] Storing inventory...`);
-    const storeResults = inventory.bulkCreateItems(householdId, userId, parsed);
+    const storeResults = inventory.bulkCreateItems(parsed);
 
     db.prepare(
-      "UPDATE voice_notes SET status = 'completed', processed_at = CURRENT_TIMESTAMP WHERE id = ? AND household_id = ?"
-    ).run(voiceNoteId, householdId);
+      "UPDATE voice_notes SET status = 'completed', processed_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(voiceNoteId);
 
-    inventory.logActivity(householdId, userId, 'process', 'voice_note', voiceNoteId, {
+    inventory.logActivity('process', 'voice_note', voiceNoteId, {
       items_created: storeResults.items.length,
       containers_created: storeResults.containers.length,
       locations_created: storeResults.locations.length,
@@ -168,10 +160,9 @@ async function processVoiceNote(householdId, userId, voiceNoteId, filename) {
     );
   } catch (err) {
     console.error(`[Voice ${voiceNoteId}] Processing failed:`, err);
-    db.prepare("UPDATE voice_notes SET status = 'error', error = ? WHERE id = ? AND household_id = ?").run(
+    db.prepare("UPDATE voice_notes SET status = 'error', error = ? WHERE id = ?").run(
       err.message,
-      voiceNoteId,
-      householdId
+      voiceNoteId
     );
     throw err;
   }
@@ -180,7 +171,7 @@ async function processVoiceNote(householdId, userId, voiceNoteId, filename) {
 // Get voice note status
 router.get('/:id/status', (req, res) => {
   const db = getDb();
-  const voiceNote = db.prepare('SELECT * FROM voice_notes WHERE id = ? AND household_id = ?').get(req.params.id, req.householdId);
+  const voiceNote = db.prepare('SELECT * FROM voice_notes WHERE id = ?').get(req.params.id);
 
   if (!voiceNote) {
     return res.status(404).json({ error: 'Voice note not found' });
@@ -213,15 +204,15 @@ router.get('/:id/status', (req, res) => {
 router.get('/', (req, res) => {
   const db = getDb();
   const voiceNotes = db
-    .prepare('SELECT id, original_name, file_size, duration_seconds, status, error, created_at, processed_at FROM voice_notes WHERE household_id = ? ORDER BY created_at DESC')
-    .all(req.householdId);
+    .prepare('SELECT id, original_name, file_size, duration_seconds, status, error, created_at, processed_at FROM voice_notes ORDER BY created_at DESC')
+    .all();
   res.json(voiceNotes);
 });
 
 // Get transcript
 router.get('/:id/transcript', (req, res) => {
   const db = getDb();
-  const voiceNote = db.prepare('SELECT id, transcript, status FROM voice_notes WHERE id = ? AND household_id = ?').get(req.params.id, req.householdId);
+  const voiceNote = db.prepare('SELECT id, transcript, status FROM voice_notes WHERE id = ?').get(req.params.id);
 
   if (!voiceNote) return res.status(404).json({ error: 'Voice note not found' });
   if (!voiceNote.transcript) return res.status(404).json({ error: 'No transcript available' });

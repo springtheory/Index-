@@ -25,14 +25,12 @@ export function clearAuth() {
 async function request(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...options.headers };
 
-  // Attach auth token to all requests
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
-  // If unauthorized, clear auth and redirect to login
   if (res.status === 401) {
     clearAuth();
     window.dispatchEvent(new CustomEvent('auth:logout'));
@@ -49,10 +47,10 @@ async function request(path, options = {}) {
 
 // === AUTH ===
 
-export function signup(email, password, name, { inviteCode, householdName } = {}) {
+export function signup(email, password, name) {
   return request('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, inviteCode, householdName }),
+    body: JSON.stringify({ email, password, name }),
   });
 }
 
@@ -96,7 +94,6 @@ export async function uploadVoiceNote(file, onProgress) {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE}/voice/upload`);
 
-    // Attach auth token
     if (authToken) {
       xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
     }

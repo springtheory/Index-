@@ -18,12 +18,8 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-function generateInviteCode() {
-  return crypto.randomBytes(3).toString('hex').toUpperCase();
-}
-
-function createSession(db, userId, email, householdId) {
-  const token = jwt.sign({ userId, email, householdId }, getJwtSecret(), { expiresIn: '30d' });
+function createSession(db, userId, email) {
+  const token = jwt.sign({ userId, email }, getJwtSecret(), { expiresIn: '30d' });
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare('INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (?, ?, ?)').run(userId, tokenHash, expiresAt);
@@ -31,10 +27,10 @@ function createSession(db, userId, email, householdId) {
   return token;
 }
 
-// Sign up - creates a new household or joins existing one with invite code
+// Sign up
 router.post('/signup', async (req, res) => {
   try {
-    const { email, password, name, inviteCode, householdName } = req.body;
+    const { email, password, name } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -55,37 +51,17 @@ router.post('/signup', async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    let householdId;
-
-    if (inviteCode) {
-      // Join existing household
-      const household = db.prepare('SELECT id FROM households WHERE invite_code = ?').get(inviteCode.toUpperCase().trim());
-      if (!household) {
-        return res.status(404).json({ error: 'Invalid invite code. Check with your household member.' });
-      }
-      householdId = household.id;
-    } else {
-      // Create new household
-      const code = generateInviteCode();
-      const hName = householdName || 'My Home';
-      const result = db.prepare('INSERT INTO households (name, invite_code) VALUES (?, ?)').run(hName, code);
-      householdId = result.lastInsertRowid;
-    }
 
     const result = db.prepare(
-      'INSERT INTO users (email, password_hash, name, household_id) VALUES (LOWER(?), ?, ?, ?)'
-    ).run(email, passwordHash, name || null, householdId);
+      'INSERT INTO users (email, password_hash, name) VALUES (LOWER(?), ?, ?)'
+    ).run(email, passwordHash, name || null);
 
     const userId = result.lastInsertRowid;
-    const token = createSession(db, userId, email.toLowerCase(), householdId);
-
-    const household = db.prepare('SELECT * FROM households WHERE id = ?').get(householdId);
-    const memberCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE household_id = ?').get(householdId).count;
+    const token = createSession(db, userId, email.toLowerCase());
 
     res.status(201).json({
       token,
-      user: { id: userId, email: email.toLowerCase(), name: name || null, householdId },
-      household: { id: household.id, name: household.name, inviteCode: household.invite_code, members: memberCount },
+      user: { id: userId, email: email.toLowerCase(), name: name || null },
     });
   } catch (err) {
     console.error('Signup error:', err);
@@ -114,19 +90,13 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = createSession(db, user.id, user.email, user.household_id);
+    const token = createSession(db, user.id, user.email);
 
     db.prepare('DELETE FROM sessions WHERE user_id = ? AND expires_at < CURRENT_TIMESTAMP').run(user.id);
 
-    const household = db.prepare('SELECT * FROM households WHERE id = ?').get(user.household_id);
-    const memberCount = household
-      ? db.prepare('SELECT COUNT(*) as count FROM users WHERE household_id = ?').get(user.household_id).count
-      : 0;
-
     res.json({
       token,
-      user: { id: user.id, email: user.email, name: user.name, householdId: user.household_id },
-      household: household ? { id: household.id, name: household.name, inviteCode: household.invite_code, members: memberCount } : null,
+      user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -149,7 +119,7 @@ router.post('/logout', (req, res) => {
   }
 });
 
-// Get current user + household info
+// Get current user
 router.get('/me', (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -169,18 +139,12 @@ router.get('/me', (req, res) => {
     }
 
     const db = getDb();
-    const user = db.prepare('SELECT id, email, name, household_id, created_at FROM users WHERE id = ?').get(decoded.userId);
+    const user = db.prepare('SELECT id, email, name, created_at FROM users WHERE id = ?').get(decoded.userId);
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    const household = db.prepare('SELECT * FROM households WHERE id = ?').get(user.household_id);
-    const members = db.prepare('SELECT id, name, email FROM users WHERE household_id = ?').all(user.household_id);
-
-    res.json({
-      user: { ...user, householdId: user.household_id },
-      household: household ? { id: household.id, name: household.name, inviteCode: household.invite_code, members } : null,
-    });
+    res.json({ user });
   } catch (err) {
     res.status(401).json({ error: 'Invalid token' });
   }

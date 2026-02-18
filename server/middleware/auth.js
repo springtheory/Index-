@@ -30,10 +30,8 @@ function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'Session expired or revoked' });
     }
 
-    // Attach user and household info to request
     req.userId = decoded.userId;
     req.userEmail = decoded.email;
-    req.householdId = decoded.householdId;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

@@ -34,9 +34,6 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('index_user')); } catch { return null; }
   });
-  const [household, setHousehold] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('index_household')); } catch { return null; }
-  });
   const [authChecked, setAuthChecked] = useState(false);
 
   // Verify existing token on mount
@@ -47,15 +44,10 @@ export default function App() {
         .then((data) => {
           setUser(data.user);
           localStorage.setItem('index_user', JSON.stringify(data.user));
-          if (data.household) {
-            setHousehold(data.household);
-            localStorage.setItem('index_household', JSON.stringify(data.household));
-          }
         })
         .catch(() => {
           clearAuth();
           setUser(null);
-          setHousehold(null);
         })
         .finally(() => setAuthChecked(true));
     } else {
@@ -77,19 +69,13 @@ export default function App() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }, []);
 
-  const handleAuth = (userData, householdData) => {
+  const handleAuth = (userData) => {
     setUser(userData);
-    if (householdData) {
-      setHousehold(householdData);
-      localStorage.setItem('index_household', JSON.stringify(householdData));
-    }
   };
 
   const handleLogout = async () => {
     await apiLogout();
     setUser(null);
-    setHousehold(null);
-    localStorage.removeItem('index_household');
     addToast('Logged out', 'info');
   };
 
@@ -165,7 +151,6 @@ export default function App() {
           <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
               {user.name || user.email}
-              {household && <span style={{ opacity: 0.6 }}> &middot; {household.name}</span>}
             </div>
             <button
               className="nav-item"
@@ -189,7 +174,7 @@ export default function App() {
             <Route path="/locations" element={<Locations addToast={addToast} />} />
             <Route path="/add" element={<AddItem addToast={addToast} />} />
             <Route path="/whatsapp" element={<WhatsAppSetup />} />
-            <Route path="/settings" element={<Settings user={user} household={household} addToast={addToast} />} />
+            <Route path="/settings" element={<Settings user={user} addToast={addToast} />} />
           </Routes>
         </main>
 

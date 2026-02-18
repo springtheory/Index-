@@ -32,22 +32,19 @@ async function transcribeAudio(filePath) {
     };
   }
 
-  // For larger files, we need to split them
-  // Use ffmpeg to split into 24MB chunks
+  // For larger files, split them
   const chunkDir = path.join(path.dirname(filePath), 'chunks_' + Date.now());
   fs.mkdirSync(chunkDir, { recursive: true });
 
   try {
     const { execSync } = require('child_process');
 
-    // Get duration
     const durationOutput = execSync(
       `ffprobe -v error -show_entries format=duration -of csv=p=0 "${filePath}"`,
       { encoding: 'utf-8' }
     ).trim();
     const totalDuration = parseFloat(durationOutput);
 
-    // Split into 10-minute chunks (well under 25MB for most audio)
     const chunkDuration = 600; // 10 minutes
     const numChunks = Math.ceil(totalDuration / chunkDuration);
     const chunkFiles = [];
@@ -63,7 +60,6 @@ async function transcribeAudio(filePath) {
       }
     }
 
-    // Transcribe each chunk
     let fullText = '';
     let totalTranscribedDuration = 0;
     const allSegments = [];
@@ -97,7 +93,6 @@ async function transcribeAudio(filePath) {
       segments: allSegments,
     };
   } finally {
-    // Cleanup chunk files
     if (fs.existsSync(chunkDir)) {
       fs.rmSync(chunkDir, { recursive: true, force: true });
     }
@@ -133,35 +128,9 @@ Rules:
 
 Return JSON with this structure:
 {
-  "locations": [
-    {
-      "name": "string - location name",
-      "description": "string - optional description"
-    }
-  ],
-  "containers": [
-    {
-      "label": "string - container identifier (e.g. 'Bin #1', 'Blue Box', 'Top Shelf')",
-      "type": "string - bin/box/shelf/drawer/bag/tote/crate/cabinet/other",
-      "color": "string or null",
-      "size": "string or null - small/medium/large/extra-large",
-      "description": "string - any details about the container",
-      "location": "string - must match a location name above"
-    }
-  ],
-  "items": [
-    {
-      "name": "string - clear, concise item name",
-      "description": "string - detailed description with all mentioned attributes",
-      "category": "string - category",
-      "quantity": "number",
-      "container": "string - must match a container label above",
-      "location": "string - must match a location name (for items not in containers)",
-      "tags": ["string array - search terms, materials, use-cases"],
-      "aliases": ["string array - alternate names and related terms"],
-      "notes": "string - any special notes (fragile, valuable, etc.)"
-    }
-  ]
+  "locations": [{ "name": "string", "description": "string or null" }],
+  "containers": [{ "label": "string", "type": "string", "color": "string or null", "size": "string or null", "description": "string", "location": "string" }],
+  "items": [{ "name": "string", "description": "string", "category": "string", "quantity": "number", "container": "string", "location": "string", "tags": ["string"], "aliases": ["string"], "notes": "string" }]
 }`,
       },
       {
@@ -177,12 +146,10 @@ Return JSON with this structure:
 
 // For very long transcripts, process in sections
 async function parseTranscriptChunked(transcript) {
-  // If transcript is short enough, parse directly
   if (transcript.length < 12000) {
     return parseTranscriptToInventory(transcript);
   }
 
-  // Split into overlapping chunks by sentences
   const sentences = transcript.match(/[^.!?]+[.!?]+/g) || [transcript];
   const chunks = [];
   let currentChunk = '';
@@ -190,7 +157,6 @@ async function parseTranscriptChunked(transcript) {
   for (const sentence of sentences) {
     if ((currentChunk + sentence).length > 10000 && currentChunk.length > 0) {
       chunks.push(currentChunk);
-      // Keep last 2 sentences for context overlap
       const lastSentences = currentChunk.match(/[^.!?]+[.!?]+/g) || [];
       currentChunk = lastSentences.slice(-2).join('') + sentence;
     } else {
@@ -201,7 +167,6 @@ async function parseTranscriptChunked(transcript) {
     chunks.push(currentChunk);
   }
 
-  // Parse each chunk
   const allResults = { locations: [], containers: [], items: [] };
 
   for (const chunk of chunks) {
@@ -211,7 +176,6 @@ async function parseTranscriptChunked(transcript) {
     allResults.items.push(...(result.items || []));
   }
 
-  // Deduplicate locations by name
   const locMap = new Map();
   for (const loc of allResults.locations) {
     const key = loc.name.toLowerCase().trim();
@@ -219,7 +183,6 @@ async function parseTranscriptChunked(transcript) {
   }
   allResults.locations = Array.from(locMap.values());
 
-  // Deduplicate containers by label
   const contMap = new Map();
   for (const cont of allResults.containers) {
     const key = cont.label.toLowerCase().trim();
@@ -231,29 +194,24 @@ async function parseTranscriptChunked(transcript) {
 }
 
 // Smart search using AI to understand intent
-async function aiSearch(query, householdId) {
+async function aiSearch(query) {
   const db = getDb();
   const client = getOpenAI();
 
-  // Get all items for AI to search through, filtered by household
   const items = db
     .prepare(
-      `
-    SELECT i.*, c.label as container_label, c.type as container_type,
-           l.name as location_name
-    FROM items i
-    LEFT JOIN containers c ON i.container_id = c.id
-    LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-    WHERE i.household_id = ?
-  `
+      `SELECT i.*, c.label as container_label, c.type as container_type,
+              l.name as location_name
+       FROM items i
+       LEFT JOIN containers c ON i.container_id = c.id
+       LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id`
     )
-    .all(householdId);
+    .all();
 
   if (items.length === 0) {
     return { results: [], message: 'No items in inventory yet.' };
   }
 
-  // Build a compact representation for the AI
   const itemList = items.map((item) => ({
     id: item.id,
     name: item.name,
@@ -287,13 +245,7 @@ Rules:
 
 Return JSON:
 {
-  "results": [
-    {
-      "item_id": number,
-      "relevance": number (0.0 to 1.0),
-      "reason": "string - brief explanation of why this matches"
-    }
-  ],
+  "results": [{ "item_id": number, "relevance": number, "reason": "string" }],
   "message": "string - friendly summary of what was found"
 }`,
       },
@@ -307,7 +259,6 @@ Return JSON:
 
   const searchResult = JSON.parse(response.choices[0].message.content);
 
-  // Enrich results with full item data
   const enrichedResults = searchResult.results
     .sort((a, b) => b.relevance - a.relevance)
     .map((r) => {
@@ -320,23 +271,19 @@ Return JSON:
 }
 
 // Check if an item already exists (deduplication)
-async function checkDuplicate(newItem, householdId) {
+async function checkDuplicate(newItem) {
   const db = getDb();
   const client = getOpenAI();
 
-  // Get existing items in the same general category/area, filtered by household
   const existing = db
     .prepare(
-      `
-    SELECT i.id, i.name, i.description, i.category, i.tags, i.aliases,
-           c.label as container_label, l.name as location_name
-    FROM items i
-    LEFT JOIN containers c ON i.container_id = c.id
-    LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-    WHERE i.household_id = ?
-  `
+      `SELECT i.id, i.name, i.description, i.category, i.tags, i.aliases,
+              c.label as container_label, l.name as location_name
+       FROM items i
+       LEFT JOIN containers c ON i.container_id = c.id
+       LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id`
     )
-    .all(householdId);
+    .all();
 
   if (existing.length === 0) return { isDuplicate: false };
 
@@ -390,7 +337,6 @@ async function processCommand(text, source = 'app') {
   const client = getOpenAI();
   const db = getDb();
 
-  // Get current inventory summary for context
   const locationCount = db.prepare('SELECT COUNT(*) as count FROM locations').get().count;
   const containerCount = db.prepare('SELECT COUNT(*) as count FROM containers').get().count;
   const itemCount = db.prepare('SELECT COUNT(*) as count FROM items').get().count;
@@ -408,35 +354,30 @@ Current inventory: ${locationCount} locations, ${containerCount} containers, ${i
 
 Available actions:
 1. "search" - User is looking for something
-2. "add_item" - User wants to add a NEW item (they must explicitly say it's new/adding)
-3. "move_item" - User wants to move an item to a different location/container
-4. "update_item" - User wants to update item details (quantity, description, etc.)
+2. "add_item" - User wants to add a NEW item
+3. "move_item" - User wants to move an item
+4. "update_item" - User wants to update item details
 5. "remove_item" - User wants to remove/delete an item
 6. "list" - User wants to see items in a specific location/container/category
 7. "status" - User wants an inventory summary
 8. "help" - User needs help
 
 IMPORTANT: Default to "search" unless the user explicitly says they want to add, move, update, or remove.
-- "where's my drill?" → search
-- "do I have any screws?" → search
-- "I just put a new hammer in bin 5" → add_item
-- "I moved the drill to the garage shelf" → move_item
-- "I used up the duct tape, remove it" → remove_item
 
 Return JSON:
 {
-  "action": "string - one of the actions above",
+  "action": "string",
   "params": {
-    "query": "search query (for search)",
-    "item_name": "item name (for add/move/update/remove)",
-    "item_description": "description (for add)",
-    "category": "category (for add/list)",
+    "query": "search query",
+    "item_name": "item name",
+    "item_description": "description",
+    "category": "category",
     "quantity": number or null,
-    "from_container": "source container (for move)",
-    "to_container": "target container (for move/add)",
-    "to_location": "target location (for move/add)",
-    "container": "container to list (for list)",
-    "location": "location to list (for list)",
+    "from_container": "source container",
+    "to_container": "target container",
+    "to_location": "target location",
+    "container": "container to list",
+    "location": "location to list",
     "updates": {}
   },
   "is_new_item": boolean,

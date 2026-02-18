@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 100, 500);
   const offset = parseInt(req.query.offset) || 0;
-  const items = inventory.getAllItems(req.householdId, limit, offset);
+  const items = inventory.getAllItems(limit, offset);
   res.json({ items, limit, offset, total: items.length });
 });
 
@@ -18,10 +18,8 @@ router.get('/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'Search query required (q parameter)' });
 
-    // First try quick local search
-    const quickResults = inventory.quickSearch(req.householdId, query);
+    const quickResults = inventory.quickSearch(query);
 
-    // If quick search found good results and no AI key, return those
     if (!process.env.OPENAI_API_KEY && quickResults.length > 0) {
       return res.json({
         results: quickResults,
@@ -30,9 +28,8 @@ router.get('/search', async (req, res) => {
       });
     }
 
-    // Use AI search for smart matching
     if (process.env.OPENAI_API_KEY) {
-      const aiResults = await ai.aiSearch(query, req.householdId);
+      const aiResults = await ai.aiSearch(query);
       return res.json({ ...aiResults, searchType: 'ai' });
     }
 
@@ -45,8 +42,7 @@ router.get('/search', async (req, res) => {
     });
   } catch (err) {
     console.error('Search error:', err);
-    // Fallback to quick search on AI error
-    const quickResults = inventory.quickSearch(req.householdId, req.query.q);
+    const quickResults = inventory.quickSearch(req.query.q);
     res.json({
       results: quickResults,
       message: `Found ${quickResults.length} items (basic search)`,
@@ -57,7 +53,7 @@ router.get('/search', async (req, res) => {
 
 // Get single item
 router.get('/:id', (req, res) => {
-  const item = inventory.getItem(req.householdId, req.params.id);
+  const item = inventory.getItem(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
   res.json(item);
 });
@@ -70,8 +66,6 @@ router.post('/', async (req, res) => {
     if (!name) return res.status(400).json({ error: 'Item name is required' });
 
     const result = await inventory.createItem(
-      req.householdId,
-      req.userId,
       { name, description, category, quantity, container_id, location_id, tags, aliases, notes },
       'app',
       force === true
@@ -94,43 +88,43 @@ router.post('/', async (req, res) => {
 
 // Update item
 router.put('/:id', (req, res) => {
-  const item = inventory.getItem(req.householdId, req.params.id);
+  const item = inventory.getItem(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
 
-  const updated = inventory.updateItem(req.householdId, req.params.id, req.body);
+  const updated = inventory.updateItem(req.params.id, req.body);
   res.json(updated);
 });
 
 // Move item
 router.post('/:id/move', (req, res) => {
   const { container_id, location_id } = req.body;
-  const item = inventory.moveItem(req.householdId, req.params.id, container_id || null, location_id || null);
+  const item = inventory.moveItem(req.params.id, container_id || null, location_id || null);
   if (!item) return res.status(404).json({ error: 'Item not found' });
   res.json(item);
 });
 
 // Delete item
 router.delete('/:id', (req, res) => {
-  const item = inventory.deleteItem(req.householdId, req.params.id);
+  const item = inventory.deleteItem(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
   res.json({ message: 'Item deleted', item });
 });
 
 // Get items by container
 router.get('/container/:id', (req, res) => {
-  const items = inventory.getItemsByContainer(req.householdId, req.params.id);
+  const items = inventory.getItemsByContainer(req.params.id);
   res.json(items);
 });
 
 // Get items by location
 router.get('/location/:id', (req, res) => {
-  const items = inventory.getItemsByLocation(req.householdId, req.params.id);
+  const items = inventory.getItemsByLocation(req.params.id);
   res.json(items);
 });
 
 // Get items by category
 router.get('/category/:category', (req, res) => {
-  const items = inventory.getItemsByCategory(req.householdId, req.params.category);
+  const items = inventory.getItemsByCategory(req.params.category);
   res.json(items);
 });
 
