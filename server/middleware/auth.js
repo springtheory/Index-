@@ -6,7 +6,6 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-// Require authentication for protected routes
 function requireAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -22,7 +21,6 @@ function requireAuth(req, res, next) {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Verify session is still active (not revoked)
     const tokenHash = hashToken(token);
     const session = getDb().prepare(
       'SELECT * FROM sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP'
@@ -32,9 +30,10 @@ function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'Session expired or revoked' });
     }
 
-    // Attach user info to request
+    // Attach user and household info to request
     req.userId = decoded.userId;
     req.userEmail = decoded.email;
+    req.householdId = decoded.householdId;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

@@ -1,4 +1,12 @@
 const CREATE_TABLES = `
+  -- Households: shared inventory groups
+  CREATE TABLE IF NOT EXISTS households (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT 'My Home',
+    invite_code TEXT UNIQUE NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   -- Users: authentication
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6,6 +14,7 @@ const CREATE_TABLES = `
     password_hash TEXT NOT NULL,
     name TEXT,
     pin_hash TEXT,
+    household_id INTEGER REFERENCES households(id),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME
   );
@@ -21,11 +30,13 @@ const CREATE_TABLES = `
 
   CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_users_household ON users(household_id);
+  CREATE INDEX IF NOT EXISTS idx_households_code ON households(invite_code);
 
   -- Locations: rooms, areas, zones in the house/garage
   CREATE TABLE IF NOT EXISTS locations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT,
     parent_id INTEGER REFERENCES locations(id),
@@ -36,7 +47,7 @@ const CREATE_TABLES = `
   -- Containers: bins, boxes, shelves, drawers, bags
   CREATE TABLE IF NOT EXISTS containers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
     label TEXT NOT NULL,
     type TEXT DEFAULT 'bin',
     color TEXT,
@@ -50,7 +61,7 @@ const CREATE_TABLES = `
   -- Items: everything stored
   CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT,
     category TEXT,
@@ -60,6 +71,7 @@ const CREATE_TABLES = `
     tags TEXT DEFAULT '[]',
     aliases TEXT DEFAULT '[]',
     notes TEXT,
+    added_by INTEGER REFERENCES users(id),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
@@ -67,7 +79,8 @@ const CREATE_TABLES = `
   -- Voice notes uploaded
   CREATE TABLE IF NOT EXISTS voice_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    uploaded_by INTEGER REFERENCES users(id),
     filename TEXT NOT NULL,
     original_name TEXT,
     duration_seconds INTEGER,
@@ -83,7 +96,8 @@ const CREATE_TABLES = `
   -- Activity log for all changes
   CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id),
     action TEXT NOT NULL,
     entity_type TEXT NOT NULL,
     entity_id INTEGER,
@@ -101,17 +115,17 @@ const CREATE_TABLES = `
   );
 
   -- Create indexes for performance
-  CREATE INDEX IF NOT EXISTS idx_items_user ON items(user_id);
+  CREATE INDEX IF NOT EXISTS idx_items_household ON items(household_id);
   CREATE INDEX IF NOT EXISTS idx_items_container ON items(container_id);
   CREATE INDEX IF NOT EXISTS idx_items_location ON items(location_id);
   CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
-  CREATE INDEX IF NOT EXISTS idx_containers_user ON containers(user_id);
+  CREATE INDEX IF NOT EXISTS idx_containers_household ON containers(household_id);
   CREATE INDEX IF NOT EXISTS idx_containers_location ON containers(location_id);
-  CREATE INDEX IF NOT EXISTS idx_locations_user ON locations(user_id);
-  CREATE INDEX IF NOT EXISTS idx_voice_notes_user ON voice_notes(user_id);
+  CREATE INDEX IF NOT EXISTS idx_locations_household ON locations(household_id);
+  CREATE INDEX IF NOT EXISTS idx_voice_notes_household ON voice_notes(household_id);
   CREATE INDEX IF NOT EXISTS idx_search_index_term ON search_index(term);
   CREATE INDEX IF NOT EXISTS idx_search_index_item ON search_index(item_id);
-  CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(user_id);
+  CREATE INDEX IF NOT EXISTS idx_activity_log_household ON activity_log(household_id);
   CREATE INDEX IF NOT EXISTS idx_activity_log_entity ON activity_log(entity_type, entity_id);
   CREATE INDEX IF NOT EXISTS idx_voice_notes_status ON voice_notes(status);
 `;

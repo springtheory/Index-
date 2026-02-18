@@ -49,10 +49,10 @@ async function request(path, options = {}) {
 
 // === AUTH ===
 
-export function signup(email, password, name) {
+export function signup(email, password, name, { inviteCode, householdName } = {}) {
   return request('/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({ email, password, name, inviteCode, householdName }),
   });
 }
 

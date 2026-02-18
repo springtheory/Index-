@@ -3,27 +3,27 @@ const ai = require('./ai');
 
 // ============ LOCATIONS ============
 
-function createLocation(userId, name, description = null, parentId = null) {
+function createLocation(householdId, name, description = null, parentId = null) {
   const db = getDb();
   const result = db
-    .prepare('INSERT INTO locations (user_id, name, description, parent_id) VALUES (?, ?, ?, ?)')
-    .run(userId, name, description, parentId);
+    .prepare('INSERT INTO locations (household_id, name, description, parent_id) VALUES (?, ?, ?, ?)')
+    .run(householdId, name, description, parentId);
 
-  logActivity(userId, 'create', 'location', result.lastInsertRowid, { name, description });
-  return getLocation(userId, result.lastInsertRowid);
+  logActivity(householdId, null, 'create', 'location', result.lastInsertRowid, { name, description });
+  return getLocation(householdId, result.lastInsertRowid);
 }
 
-function getLocation(userId, id) {
-  return getDb().prepare('SELECT * FROM locations WHERE id = ? AND user_id = ?').get(id, userId);
+function getLocation(householdId, id) {
+  return getDb().prepare('SELECT * FROM locations WHERE id = ? AND household_id = ?').get(id, householdId);
 }
 
-function getLocationByName(userId, name) {
+function getLocationByName(householdId, name) {
   return getDb()
-    .prepare('SELECT * FROM locations WHERE LOWER(name) = LOWER(?) AND user_id = ?')
-    .get(name, userId);
+    .prepare('SELECT * FROM locations WHERE LOWER(name) = LOWER(?) AND household_id = ?')
+    .get(name, householdId);
 }
 
-function getAllLocations(userId) {
+function getAllLocations(householdId) {
   return getDb()
     .prepare(
       `SELECT l.*, COUNT(DISTINCT c.id) as container_count,
@@ -31,97 +31,97 @@ function getAllLocations(userId) {
        FROM locations l
        LEFT JOIN containers c ON c.location_id = l.id
        LEFT JOIN items i ON i.location_id = l.id OR i.container_id IN (SELECT id FROM containers WHERE location_id = l.id)
-       WHERE l.user_id = ?
+       WHERE l.household_id = ?
        GROUP BY l.id
        ORDER BY l.name`
     )
-    .all(userId);
+    .all(householdId);
 }
 
-function findOrCreateLocation(userId, name, description = null) {
-  let location = getLocationByName(userId, name);
+function findOrCreateLocation(householdId, name, description = null) {
+  let location = getLocationByName(householdId, name);
   if (!location) {
-    location = createLocation(userId, name, description);
+    location = createLocation(householdId, name, description);
   }
   return location;
 }
 
 // ============ CONTAINERS ============
 
-function createContainer(userId, data) {
+function createContainer(householdId, data) {
   const db = getDb();
   const { label, type = 'bin', color = null, size = null, description = null, location_id = null } = data;
 
   const result = db
     .prepare(
-      'INSERT INTO containers (user_id, label, type, color, size, description, location_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO containers (household_id, label, type, color, size, description, location_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(userId, label, type, color, size, description, location_id);
+    .run(householdId, label, type, color, size, description, location_id);
 
-  logActivity(userId, 'create', 'container', result.lastInsertRowid, data);
-  return getContainer(userId, result.lastInsertRowid);
+  logActivity(householdId, null, 'create', 'container', result.lastInsertRowid, data);
+  return getContainer(householdId, result.lastInsertRowid);
 }
 
-function getContainer(userId, id) {
+function getContainer(householdId, id) {
   return getDb()
     .prepare(
       `SELECT c.*, l.name as location_name
        FROM containers c
        LEFT JOIN locations l ON c.location_id = l.id
-       WHERE c.id = ? AND c.user_id = ?`
+       WHERE c.id = ? AND c.household_id = ?`
     )
-    .get(id, userId);
+    .get(id, householdId);
 }
 
-function getContainerByLabel(userId, label) {
+function getContainerByLabel(householdId, label) {
   return getDb()
     .prepare(
       `SELECT c.*, l.name as location_name
        FROM containers c
        LEFT JOIN locations l ON c.location_id = l.id
-       WHERE LOWER(c.label) = LOWER(?) AND c.user_id = ?`
+       WHERE LOWER(c.label) = LOWER(?) AND c.household_id = ?`
     )
-    .get(label, userId);
+    .get(label, householdId);
 }
 
-function getAllContainers(userId) {
+function getAllContainers(householdId) {
   return getDb()
     .prepare(
       `SELECT c.*, l.name as location_name, COUNT(i.id) as item_count
        FROM containers c
        LEFT JOIN locations l ON c.location_id = l.id
        LEFT JOIN items i ON i.container_id = c.id
-       WHERE c.user_id = ?
+       WHERE c.household_id = ?
        GROUP BY c.id
        ORDER BY c.label`
     )
-    .all(userId);
+    .all(householdId);
 }
 
-function getContainersByLocation(userId, locationId) {
+function getContainersByLocation(householdId, locationId) {
   return getDb()
     .prepare(
       `SELECT c.*, COUNT(i.id) as item_count
        FROM containers c
        LEFT JOIN items i ON i.container_id = c.id
-       WHERE c.location_id = ? AND c.user_id = ?
+       WHERE c.location_id = ? AND c.household_id = ?
        GROUP BY c.id
        ORDER BY c.label`
     )
-    .all(locationId, userId);
+    .all(locationId, householdId);
 }
 
-function findOrCreateContainer(userId, data) {
-  let container = getContainerByLabel(userId, data.label);
+function findOrCreateContainer(householdId, data) {
+  let container = getContainerByLabel(householdId, data.label);
   if (!container) {
-    container = createContainer(userId, data);
+    container = createContainer(householdId, data);
   }
   return container;
 }
 
 // ============ ITEMS ============
 
-async function createItem(userId, data, source = 'app', skipDuplicateCheck = false) {
+async function createItem(householdId, userId, data, source = 'app', skipDuplicateCheck = false) {
   const db = getDb();
   const {
     name,
@@ -137,7 +137,7 @@ async function createItem(userId, data, source = 'app', skipDuplicateCheck = fal
 
   // Check for duplicates unless explicitly skipped
   if (!skipDuplicateCheck) {
-    const dupCheck = await ai.checkDuplicate({ name, description, category }, userId);
+    const dupCheck = await ai.checkDuplicate({ name, description, category }, householdId);
     if (dupCheck.isDuplicate && dupCheck.confidence > 0.8) {
       return {
         duplicate: true,
@@ -151,11 +151,11 @@ async function createItem(userId, data, source = 'app', skipDuplicateCheck = fal
 
   const result = db
     .prepare(
-      `INSERT INTO items (user_id, name, description, category, quantity, container_id, location_id, tags, aliases, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO items (household_id, name, description, category, quantity, container_id, location_id, tags, aliases, notes, added_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      userId,
+      householdId,
       name,
       description,
       category,
@@ -164,11 +164,12 @@ async function createItem(userId, data, source = 'app', skipDuplicateCheck = fal
       location_id,
       JSON.stringify(tags),
       JSON.stringify(aliases),
-      notes
+      notes,
+      userId
     );
 
   const itemId = result.lastInsertRowid;
-  logActivity(userId, 'create', 'item', itemId, { name, source }, source);
+  logActivity(householdId, userId, 'create', 'item', itemId, { name, source }, source);
 
   // Generate and store search index
   try {
@@ -184,11 +185,11 @@ async function createItem(userId, data, source = 'app', skipDuplicateCheck = fal
     console.error('Failed to generate search terms for item', itemId, err.message);
   }
 
-  return getItem(userId, itemId);
+  return getItem(householdId, itemId);
 }
 
 // Bulk create items from parsed voice data
-function bulkCreateItems(userId, parsedData) {
+function bulkCreateItems(householdId, userId, parsedData) {
   const db = getDb();
 
   const results = { locations: [], containers: [], items: [], errors: [] };
@@ -196,7 +197,7 @@ function bulkCreateItems(userId, parsedData) {
   // Create locations
   for (const loc of parsedData.locations || []) {
     try {
-      const location = findOrCreateLocation(userId, loc.name, loc.description);
+      const location = findOrCreateLocation(householdId, loc.name, loc.description);
       results.locations.push(location);
     } catch (err) {
       results.errors.push({ type: 'location', data: loc, error: err.message });
@@ -206,8 +207,8 @@ function bulkCreateItems(userId, parsedData) {
   // Create containers
   for (const cont of parsedData.containers || []) {
     try {
-      const location = cont.location ? getLocationByName(userId, cont.location) : null;
-      const container = findOrCreateContainer(userId, {
+      const location = cont.location ? getLocationByName(householdId, cont.location) : null;
+      const container = findOrCreateContainer(householdId, {
         label: cont.label,
         type: cont.type || 'bin',
         color: cont.color,
@@ -223,18 +224,18 @@ function bulkCreateItems(userId, parsedData) {
 
   // Create items
   const insertItem = db.prepare(
-    `INSERT INTO items (user_id, name, description, category, quantity, container_id, location_id, tags, aliases, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO items (household_id, name, description, category, quantity, container_id, location_id, tags, aliases, notes, added_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertSearchTerm = db.prepare('INSERT INTO search_index (item_id, term, weight) VALUES (?, ?, ?)');
 
   for (const item of parsedData.items || []) {
     try {
-      const container = item.container ? getContainerByLabel(userId, item.container) : null;
-      const location = item.location ? getLocationByName(userId, item.location) : null;
+      const container = item.container ? getContainerByLabel(householdId, item.container) : null;
+      const location = item.location ? getLocationByName(householdId, item.location) : null;
 
       const result = insertItem.run(
-        userId,
+        householdId,
         item.name,
         item.description || null,
         item.category || null,
@@ -243,11 +244,12 @@ function bulkCreateItems(userId, parsedData) {
         location ? location.id : null,
         JSON.stringify(item.tags || []),
         JSON.stringify(item.aliases || []),
-        item.notes || null
+        item.notes || null,
+        userId
       );
 
       const itemId = result.lastInsertRowid;
-      logActivity(userId, 'create', 'item', itemId, { name: item.name, source: 'voice_note' }, 'voice_note');
+      logActivity(householdId, userId, 'create', 'item', itemId, { name: item.name, source: 'voice_note' }, 'voice_note');
 
       // Add basic search terms synchronously
       const terms = new Set();
@@ -271,7 +273,7 @@ function bulkCreateItems(userId, parsedData) {
   return results;
 }
 
-function getItem(userId, id) {
+function getItem(householdId, id) {
   return getDb()
     .prepare(
       `SELECT i.*, c.label as container_label, c.type as container_type,
@@ -279,12 +281,12 @@ function getItem(userId, id) {
        FROM items i
        LEFT JOIN containers c ON i.container_id = c.id
        LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-       WHERE i.id = ? AND i.user_id = ?`
+       WHERE i.id = ? AND i.household_id = ?`
     )
-    .get(id, userId);
+    .get(id, householdId);
 }
 
-function getAllItems(userId, limit = 100, offset = 0) {
+function getAllItems(householdId, limit = 100, offset = 0) {
   return getDb()
     .prepare(
       `SELECT i.*, c.label as container_label, c.type as container_type,
@@ -292,56 +294,56 @@ function getAllItems(userId, limit = 100, offset = 0) {
        FROM items i
        LEFT JOIN containers c ON i.container_id = c.id
        LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-       WHERE i.user_id = ?
+       WHERE i.household_id = ?
        ORDER BY i.updated_at DESC
        LIMIT ? OFFSET ?`
     )
-    .all(userId, limit, offset);
+    .all(householdId, limit, offset);
 }
 
-function getItemsByContainer(userId, containerId) {
+function getItemsByContainer(householdId, containerId) {
   return getDb()
     .prepare(
       `SELECT i.*, c.label as container_label, l.name as location_name
        FROM items i
        LEFT JOIN containers c ON i.container_id = c.id
        LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-       WHERE i.container_id = ? AND i.user_id = ?
+       WHERE i.container_id = ? AND i.household_id = ?
        ORDER BY i.name`
     )
-    .all(containerId, userId);
+    .all(containerId, householdId);
 }
 
-function getItemsByLocation(userId, locationId) {
+function getItemsByLocation(householdId, locationId) {
   return getDb()
     .prepare(
       `SELECT i.*, c.label as container_label, l.name as location_name
        FROM items i
        LEFT JOIN containers c ON i.container_id = c.id
        LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-       WHERE (i.location_id = ? OR c.location_id = ?) AND i.user_id = ?
+       WHERE (i.location_id = ? OR c.location_id = ?) AND i.household_id = ?
        ORDER BY i.name`
     )
-    .all(locationId, locationId, userId);
+    .all(locationId, locationId, householdId);
 }
 
-function getItemsByCategory(userId, category) {
+function getItemsByCategory(householdId, category) {
   return getDb()
     .prepare(
       `SELECT i.*, c.label as container_label, l.name as location_name
        FROM items i
        LEFT JOIN containers c ON i.container_id = c.id
        LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-       WHERE LOWER(i.category) = LOWER(?) AND i.user_id = ?
+       WHERE LOWER(i.category) = LOWER(?) AND i.household_id = ?
        ORDER BY i.name`
     )
-    .all(category, userId);
+    .all(category, householdId);
 }
 
-function updateItem(userId, id, updates) {
+function updateItem(householdId, id, updates) {
   const db = getDb();
   // Verify ownership
-  const item = getItem(userId, id);
+  const item = getItem(householdId, id);
   if (!item) return null;
 
   const allowed = ['name', 'description', 'category', 'quantity', 'container_id', 'location_id', 'tags', 'aliases', 'notes'];
@@ -358,49 +360,49 @@ function updateItem(userId, id, updates) {
   if (fields.length === 0) return item;
 
   fields.push('updated_at = CURRENT_TIMESTAMP');
-  values.push(id, userId);
+  values.push(id, householdId);
 
-  db.prepare(`UPDATE items SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`).run(...values);
-  logActivity(userId, 'update', 'item', id, updates);
-  return getItem(userId, id);
+  db.prepare(`UPDATE items SET ${fields.join(', ')} WHERE id = ? AND household_id = ?`).run(...values);
+  logActivity(householdId, null, 'update', 'item', id, updates);
+  return getItem(householdId, id);
 }
 
-function moveItem(userId, itemId, toContainerId = null, toLocationId = null) {
+function moveItem(householdId, itemId, toContainerId = null, toLocationId = null) {
   const db = getDb();
-  const item = getItem(userId, itemId);
+  const item = getItem(householdId, itemId);
   if (!item) return null;
 
   db.prepare(
-    'UPDATE items SET container_id = ?, location_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?'
+    'UPDATE items SET container_id = ?, location_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND household_id = ?'
   ).run(
     toContainerId !== null ? toContainerId : item.container_id,
     toLocationId !== null ? toLocationId : item.location_id,
     itemId,
-    userId
+    householdId
   );
 
-  logActivity(userId, 'move', 'item', itemId, {
+  logActivity(householdId, null, 'move', 'item', itemId, {
     from_container: item.container_label,
     to_container_id: toContainerId,
     to_location_id: toLocationId,
   });
 
-  return getItem(userId, itemId);
+  return getItem(householdId, itemId);
 }
 
-function deleteItem(userId, id) {
+function deleteItem(householdId, id) {
   const db = getDb();
-  const item = getItem(userId, id);
+  const item = getItem(householdId, id);
   if (!item) return null;
 
   db.prepare('DELETE FROM search_index WHERE item_id = ?').run(id);
-  db.prepare('DELETE FROM items WHERE id = ? AND user_id = ?').run(id, userId);
-  logActivity(userId, 'delete', 'item', id, { name: item.name });
+  db.prepare('DELETE FROM items WHERE id = ? AND household_id = ?').run(id, householdId);
+  logActivity(householdId, null, 'delete', 'item', id, { name: item.name });
   return item;
 }
 
 // Basic text search using the search index
-function quickSearch(userId, query) {
+function quickSearch(householdId, query) {
   const db = getDb();
   const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
 
@@ -418,47 +420,47 @@ function quickSearch(userId, query) {
        JOIN items i ON si.item_id = i.id
        LEFT JOIN containers c ON i.container_id = c.id
        LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-       WHERE (${placeholders}) AND i.user_id = ?
+       WHERE (${placeholders}) AND i.household_id = ?
        GROUP BY i.id
        ORDER BY search_score DESC
        LIMIT 50`
     )
-    .all(...params, userId);
+    .all(...params, householdId);
 }
 
 // ============ ACTIVITY LOG ============
 
-function logActivity(userId, action, entityType, entityId, details = {}, source = 'app') {
+function logActivity(householdId, userId, action, entityType, entityId, details = {}, source = 'app') {
   getDb()
     .prepare(
-      'INSERT INTO activity_log (user_id, action, entity_type, entity_id, details, source) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO activity_log (household_id, user_id, action, entity_type, entity_id, details, source) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(userId, action, entityType, entityId, JSON.stringify(details), source);
+    .run(householdId, userId, action, entityType, entityId, JSON.stringify(details), source);
 }
 
-function getRecentActivity(userId, limit = 50) {
+function getRecentActivity(householdId, limit = 50) {
   return getDb()
-    .prepare('SELECT * FROM activity_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
-    .all(userId, limit);
+    .prepare('SELECT * FROM activity_log WHERE household_id = ? ORDER BY created_at DESC LIMIT ?')
+    .all(householdId, limit);
 }
 
 // ============ STATS ============
 
-function getStats(userId) {
+function getStats(householdId) {
   const db = getDb();
   return {
-    totalItems: db.prepare('SELECT COUNT(*) as count FROM items WHERE user_id = ?').get(userId).count,
-    totalContainers: db.prepare('SELECT COUNT(*) as count FROM containers WHERE user_id = ?').get(userId).count,
-    totalLocations: db.prepare('SELECT COUNT(*) as count FROM locations WHERE user_id = ?').get(userId).count,
-    totalVoiceNotes: db.prepare('SELECT COUNT(*) as count FROM voice_notes WHERE user_id = ?').get(userId).count,
+    totalItems: db.prepare('SELECT COUNT(*) as count FROM items WHERE household_id = ?').get(householdId).count,
+    totalContainers: db.prepare('SELECT COUNT(*) as count FROM containers WHERE household_id = ?').get(householdId).count,
+    totalLocations: db.prepare('SELECT COUNT(*) as count FROM locations WHERE household_id = ?').get(householdId).count,
+    totalVoiceNotes: db.prepare('SELECT COUNT(*) as count FROM voice_notes WHERE household_id = ?').get(householdId).count,
     categories: db
       .prepare(
         `SELECT category, COUNT(*) as count FROM items
-         WHERE category IS NOT NULL AND user_id = ?
+         WHERE category IS NOT NULL AND household_id = ?
          GROUP BY category ORDER BY count DESC`
       )
-      .all(userId),
-    recentActivity: getRecentActivity(userId, 10),
+      .all(householdId),
+    recentActivity: getRecentActivity(householdId, 10),
   };
 }
 

@@ -231,11 +231,11 @@ async function parseTranscriptChunked(transcript) {
 }
 
 // Smart search using AI to understand intent
-async function aiSearch(query, userId) {
+async function aiSearch(query, householdId) {
   const db = getDb();
   const client = getOpenAI();
 
-  // Get all items for AI to search through, filtered by user
+  // Get all items for AI to search through, filtered by household
   const items = db
     .prepare(
       `
@@ -244,10 +244,10 @@ async function aiSearch(query, userId) {
     FROM items i
     LEFT JOIN containers c ON i.container_id = c.id
     LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-    WHERE i.user_id = ?
+    WHERE i.household_id = ?
   `
     )
-    .all(userId);
+    .all(householdId);
 
   if (items.length === 0) {
     return { results: [], message: 'No items in inventory yet.' };
@@ -320,11 +320,11 @@ Return JSON:
 }
 
 // Check if an item already exists (deduplication)
-async function checkDuplicate(newItem, userId) {
+async function checkDuplicate(newItem, householdId) {
   const db = getDb();
   const client = getOpenAI();
 
-  // Get existing items in the same general category/area, filtered by user
+  // Get existing items in the same general category/area, filtered by household
   const existing = db
     .prepare(
       `
@@ -333,10 +333,10 @@ async function checkDuplicate(newItem, userId) {
     FROM items i
     LEFT JOIN containers c ON i.container_id = c.id
     LEFT JOIN locations l ON COALESCE(i.location_id, c.location_id) = l.id
-    WHERE i.user_id = ?
+    WHERE i.household_id = ?
   `
     )
-    .all(userId);
+    .all(householdId);
 
   if (existing.length === 0) return { isDuplicate: false };
 
